@@ -10,7 +10,7 @@ mod account;
 mod client;
 mod disclosure;
 mod pool;
-mod runtime;
+pub(crate) mod runtime;
 
 pub use account::Account;
 pub use client::Client;
