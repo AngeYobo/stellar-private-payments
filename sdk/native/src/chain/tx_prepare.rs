@@ -1,6 +1,6 @@
 //! Build and simulate pool contract transactions for signing/submission.
 
-use crate::types::ExtData;
+use crate::types::{ExtData, SignerAddress};
 use anyhow::{Result, anyhow};
 use stellar_xdr::{self as xdr};
 
@@ -26,8 +26,9 @@ impl StateFetcher {
         &self,
         pool_contract_id: &str,
         input: &PoolTransactInput,
-        source_account: &str,
+        source_account: &SignerAddress,
     ) -> Result<PreparedSorobanTx> {
+        let source_account = source_account.as_str();
         self.enabled_pool_for(pool_contract_id)?;
         let proof_scval = pool_proof_to_scval(
             &input.proof_uncompressed,

@@ -16,7 +16,7 @@ use stellar_private_payments::{
     chain::{RpcClient, StateFetcher},
     crypto::derive_asp_user_leaf as derive_asp_user_leaf_native,
     disclosure::verify_disclosure_receipt,
-    types::{DisclosureReceipt, Field, KeyDerivationSignature, NotePublicKey},
+    types::{DisclosureReceipt, Field, KeyDerivationSignature, NotePublicKey, SignerAddress},
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
@@ -77,6 +77,8 @@ pub struct Client {
 struct AccountOptions {
     network_passphrase: String,
     user_address: Option<String>,
+    /// The account that signs and pays. Optional; defaults to `user_address`.
+    signer_address: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -200,8 +202,10 @@ impl Client {
         with_correlation_id(new_correlation_id(), async {
             let opts: AccountOptions = serde_wasm_bindgen::from_value(options)?;
             let user_address = resolve_user_address(&signer, opts.user_address).await?;
-            let wallet_signer =
-                WalletSigner::new(signer, opts.network_passphrase, user_address.clone())?;
+            // Defaults to the note owner. The wallet signs with this account.
+            let signer_address =
+                SignerAddress::new(opts.signer_address.unwrap_or_else(|| user_address.clone()));
+            let wallet_signer = WalletSigner::new(signer, opts.network_passphrase, signer_address)?;
 
             self.ensure_prover().await?;
 
