@@ -5,9 +5,10 @@ use crate::{
     planner::Transact,
     state::{SqliteStorage, StoredUserKeys},
     types::{
-        AspMembershipProof, AspMembershipSync, AspNonMembershipProof, EncryptionKeyPair,
-        EncryptionPublicKey, ExtAmount, ExtData, Field, NoteAmount, NoteKeyPair, NotePrivateKey,
-        NotePublicKey, PolicyFlags, SMT_DEPTH, TransactChainContext,
+        AspMembershipProof, AspMembershipSync, AspNonMembershipProof, BabyJubJubPoint,
+        EncryptionKeyPair, EncryptionPublicKey, ExtAmount, ExtData, Field, GlobalViewKeyCiphertext,
+        GvkMode, NoteAmount, NoteKeyPair, NotePrivateKey, NotePublicKey, PolicyFlags, SMT_DEPTH,
+        TransactChainContext,
     },
     zk::{
         crypto::asp_membership_leaf,
@@ -40,6 +41,8 @@ pub struct TransactRequest {
     pub asp_depth: u32,
     pub non_membership_proof: Option<AspNonMembershipProof>,
     pub policy_flags: PolicyFlags,
+    pub gvk_mode: GvkMode,
+    pub admin_view_key: Option<BabyJubJubPoint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +55,8 @@ pub struct PreparedTxPublic {
     pub ext_data_hash_be: [u8; 32],
     pub asp_membership_root: Field,
     pub asp_non_membership_root: Field,
+    pub output_gvk_ciphertexts: Option<[GlobalViewKeyCiphertext; 2]>,
+    pub input_gvk_ciphertexts: Option<Vec<GlobalViewKeyCiphertext>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +79,8 @@ impl From<&PreparedTxPublic> for OnchainProofPublicInputs {
             ext_data_hash_be: p.ext_data_hash_be,
             asp_membership_root: p.asp_membership_root,
             asp_non_membership_root: p.asp_non_membership_root,
+            output_gvk_ciphertexts: p.output_gvk_ciphertexts.clone(),
+            input_gvk_ciphertexts: p.input_gvk_ciphertexts.clone(),
         }
     }
 }
@@ -108,6 +115,8 @@ pub(crate) fn transact_request_from_step(
         asp_depth: chain.asp_membership_levels,
         non_membership_proof: chain.non_membership_proof.clone(),
         policy_flags: chain.policy_flags,
+        gvk_mode: chain.gvk_mode,
+        admin_view_key: chain.admin_view_key.clone(),
     }
 }
 
@@ -187,6 +196,8 @@ pub fn build_transact_params(
         asp_depth: req.asp_depth,
         smt_depth: req.smt_depth,
         policy_flags: req.policy_flags,
+        gvk_mode: req.gvk_mode,
+        admin_view_key: req.admin_view_key.clone(),
     })))
 }
 

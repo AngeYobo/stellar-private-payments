@@ -1,6 +1,7 @@
 mod address;
 mod amounts;
 mod chain_data;
+mod circuit_stem;
 mod client;
 mod correlation;
 mod disclosure;
@@ -12,6 +13,7 @@ pub use address::*;
 pub use amounts::*;
 use anyhow::{Result, anyhow};
 pub use chain_data::*;
+pub use circuit_stem::CircuitStem;
 pub use client::*;
 pub use correlation::*;
 pub use disclosure::*;
@@ -167,6 +169,9 @@ pub struct UserNoteSummary {
     pub created_at_ledger: u32,
     /// Whether the note has been spent (nullifier observed).
     pub spent: bool,
+    /// Admin audit ciphertext from the commitment event, if the pool emits GVK
+    /// data.
+    pub gvk_ciphertext: Option<GlobalViewKeyCiphertext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -315,6 +320,10 @@ impl PoolConfigEntry {
             AssetDescriptor::Classic { code, .. } => code.clone(),
             AssetDescriptor::Contract { symbol, .. } => symbol.clone(),
         }
+    }
+
+    pub fn circuit_stem(&self) -> CircuitStem {
+        CircuitStem::transact(self.policy_flags, self.gvk_mode)
     }
 }
 

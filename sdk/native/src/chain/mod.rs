@@ -18,6 +18,7 @@ pub use stellar_xdr::{Limits, ReadXdr, TransactionEnvelope, WriteXdr};
 pub(crate) use contract_state::OnchainProofPublicInputs;
 pub(crate) use conversions::{
     ParsedContractEvent, parse_event_metadata, scval_to_address_string, scval_to_bytes,
+    scval_to_global_view_key_ciphertext, scval_to_optional_global_view_key_ciphertext,
     scval_to_u32, scval_to_u64, scval_to_u256,
 };
 pub(crate) use ext_data_hash::hash_ext_data_offchain;

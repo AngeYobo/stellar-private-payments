@@ -7,7 +7,7 @@
 //! ```no_run
 //! use stellar_private_payments::{
 //!     CircuitStore, Client, Handle, LocalProver, LocalSigner, LocalStorage, Prover,
-//!     types::{ContractConfig, NoteAmount},
+//!     types::{CircuitStem, ContractConfig, PolicyFlags},
 //! };
 //!
 //! # async fn example(deployment: ContractConfig) -> Result<(), Box<dyn std::error::Error>> {
@@ -45,6 +45,7 @@
 pub mod chain;
 pub mod circuits;
 pub mod disclosure;
+pub mod gvk;
 pub mod plan;
 pub mod planner;
 pub mod prover;

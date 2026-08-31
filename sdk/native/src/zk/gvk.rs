@@ -16,7 +16,7 @@ use crate::{
     },
     zk::{
         babyjub::{self, Point},
-        crypto::poseidon2_hash3_internal,
+        crypto::{self, poseidon2_hash3_internal},
         encryption::generate_random_blinding,
         serialization::{field_to_scalar, scalar_to_field},
     },
@@ -24,6 +24,7 @@ use crate::{
 use anyhow::{Result, anyhow, bail};
 use ark_bn254::Fr as Scalar;
 use ark_ff::Zero;
+use std::collections::HashSet;
 use taceo_poseidon2::bn254::t4;
 
 /// Domain separation for the `r` derivation chain.
@@ -44,11 +45,18 @@ pub struct GvkNote {
 }
 
 /// The subset of note secrets an admin recovers by decryption.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct GvkRecoveredNote {
     pub pk: Field,
     pub amount: Field,
     pub blinding: Field,
+}
+
+/// Admin-recovered note secrets verified against an on-chain commitment.
+#[derive(Clone, PartialEq, Eq)]
+pub struct GvkAuditedNote {
+    pub note: GvkRecoveredNote,
+    pub commitment: Field,
 }
 
 impl GvkNote {
@@ -133,6 +141,91 @@ impl GlobalViewKeyCiphertext {
             blinding: scalar_to_field(&(field_to_scalar(&self.c3) - k[2])),
         })
     }
+
+    /// Decrypt and verify the recovered plaintext against
+    /// `expected_commitment`.
+    ///
+    /// Returns `None` when decryption yields a dummy (zero-amount) note or the
+    /// recomputed commitment does not match (wrong key, tampered ciphertext, or
+    /// corrupt data).
+    pub fn decrypt_audited_for_commitment(
+        &self,
+        d_priv: &Field,
+        expected_commitment: &Field,
+    ) -> Option<GvkAuditedNote> {
+        audited_from_recovered(self.decrypt(d_priv).ok()?, expected_commitment)
+    }
+}
+
+/// Decrypt `ciphertext` and return the recovered note when its recomputed
+/// commitment appears in `candidate_commitments`.
+///
+/// Used for traceable-mode nullifier events, which carry a spent-note
+/// ciphertext but not the commitment itself.
+pub fn try_decrypt_against_commitments(
+    d_priv: &Field,
+    ciphertext: &GlobalViewKeyCiphertext,
+    candidate_commitments: impl IntoIterator<Item = Field>,
+) -> Option<GvkAuditedNote> {
+    let commitments: HashSet<Field> = candidate_commitments.into_iter().collect();
+    try_decrypt_against_commitment_set(d_priv, ciphertext, &commitments)
+}
+
+/// Like [`try_decrypt_against_commitments`], but accepts a pre-built set so
+/// pool-wide audits hash each recovered note once.
+pub fn try_decrypt_against_commitment_set(
+    d_priv: &Field,
+    ciphertext: &GlobalViewKeyCiphertext,
+    candidate_commitments: &HashSet<Field>,
+) -> Option<GvkAuditedNote> {
+    let recovered = ciphertext.decrypt(d_priv).ok()?;
+    audited_from_recovered_in_set(recovered, candidate_commitments)
+}
+
+pub(crate) fn commitment_field_for_recovered(recovered: &GvkRecoveredNote) -> Option<Field> {
+    let amount = recovered.amount().ok()?;
+    if amount.is_zero() {
+        return None;
+    }
+
+    let computed = crypto::compute_commitment(
+        &recovered.amount.to_le_bytes(),
+        &recovered.pk.to_le_bytes(),
+        &recovered.blinding.to_le_bytes(),
+    )
+    .ok()?;
+    let computed_le: [u8; 32] = computed.as_slice().try_into().ok()?;
+    Field::try_from_le_bytes(computed_le).ok()
+}
+
+fn audited_from_recovered(
+    recovered: GvkRecoveredNote,
+    expected_commitment: &Field,
+) -> Option<GvkAuditedNote> {
+    let computed = commitment_field_for_recovered(&recovered)?;
+    if computed != *expected_commitment {
+        return None;
+    }
+
+    Some(GvkAuditedNote {
+        note: recovered,
+        commitment: computed,
+    })
+}
+
+fn audited_from_recovered_in_set(
+    recovered: GvkRecoveredNote,
+    candidate_commitments: &HashSet<Field>,
+) -> Option<GvkAuditedNote> {
+    let computed = commitment_field_for_recovered(&recovered)?;
+    if !candidate_commitments.contains(&computed) {
+        return None;
+    }
+
+    Some(GvkAuditedNote {
+        note: recovered,
+        commitment: computed,
+    })
 }
 
 impl GlobalViewKeyMemo {
@@ -140,7 +233,8 @@ impl GlobalViewKeyMemo {
     ///
     /// `n_input_slots` is the circuit's input slot count (currently `2`), used
     /// to compute the per-note encryption index for outputs (`idx =
-    /// n_input_slots + k`).
+    /// n_input_slots + k`). Input `k` uses `idx = k` and is encrypted only in
+    /// traceable mode.
     pub fn build(
         gvk_mode: GvkMode,
         admin_pub_key: BabyJubJubPoint,
@@ -295,6 +389,45 @@ mod tests {
             blinding: field(0xDEAD_BEEF),
             salt: field(0xCAFE_F00D),
         }
+    }
+
+    #[test]
+    fn decrypt_audited_for_commitment_rejects_wrong_commitment() -> Result<()> {
+        let d_priv = field(7);
+        let admin = BabyJubJubPoint::from_priv_scalar(&d_priv).expect("valid admin key");
+        let note = sample_note();
+        let ct = note.encrypt(&admin, &field(5), 0)?;
+        assert!(
+            ct.decrypt_audited_for_commitment(&d_priv, &field(0xBAD))
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn decrypt_audited_for_commitment_accepts_valid_note() -> Result<()> {
+        let d_priv = field(7);
+        let admin = BabyJubJubPoint::from_priv_scalar(&d_priv).expect("valid admin key");
+        let note = sample_note();
+        let ct = note.encrypt(&admin, &field(5), 0)?;
+        let commitment_le = crypto::compute_commitment(
+            &note.amount.to_le_bytes(),
+            &note.pk.to_le_bytes(),
+            &note.blinding.to_le_bytes(),
+        )?;
+        let commitment = Field::try_from_le_bytes(
+            commitment_le
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow!("commitment hash is not 32 bytes"))?,
+        )?;
+        let audited = ct
+            .decrypt_audited_for_commitment(&d_priv, &commitment)
+            .expect("valid audited note");
+        assert_eq!(audited.note.pk, note.pk);
+        assert_eq!(audited.note.amount()?, NoteAmount::from(1_000_000u128));
+        assert_eq!(audited.note.blinding, note.blinding);
+        Ok(())
     }
 
     #[test]

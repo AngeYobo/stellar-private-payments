@@ -7,8 +7,8 @@ use stellar_private_payments::{
     Handle, LocalProver, LocalSigner, LocalStorage, Signer,
     blocking::{Account, Client, PrivatePool},
     types::{
-        ContractConfig, EncryptionPublicKey, Field, NoteAmount, NotePublicKey, PolicyFlags,
-        TransferRecipient,
+        CircuitStem, ContractConfig, EncryptionPublicKey, Field, GvkMode, NoteAmount,
+        NotePublicKey, PolicyFlags, TransferRecipient,
     },
 };
 
@@ -75,10 +75,12 @@ fn test_client_and_account(wallet: Option<&[u64]>) -> Result<(Client, Account)> 
     let storage_path = db_path.to_string_lossy().into_owned();
     let storage = LocalStorage::open(&storage_path)?;
     let artifacts = test_prover_artifacts()?;
-    let prover = Handle::from_box(Box::new(LocalProver::from_artifacts(&[(
+    let stem = CircuitStem::transact(
         PolicyFlags::ALLOWLIST | PolicyFlags::BLOCKLIST,
-        artifacts,
-    )])?) as Box<dyn stellar_private_payments::Prover>);
+        GvkMode::Off,
+    );
+    let prover = Handle::from_box(Box::new(LocalProver::from_artifacts(&[(stem, artifacts)])?)
+        as Box<dyn stellar_private_payments::Prover>);
     let contract_config: ContractConfig = serde_json::from_str(TEST_CONFIG_JSON)?;
     let mut client = Client::init(
         "https://soroban-testnet.stellar.org",

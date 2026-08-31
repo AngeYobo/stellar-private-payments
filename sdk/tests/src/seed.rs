@@ -7,9 +7,9 @@ use rusqlite::{Connection, params};
 use stellar_private_payments::{
     state::SqliteStorage,
     types::{
-        AspNonMembershipProof, ContractEvent, ContractsEventData, Field, KeyDerivationSignature,
-        LeafAddedEvent, NewCommitmentEvent, NoteAmount, NoteKeyPair, PolicyFlags, SMT_DEPTH,
-        SyncMetadata, TransactChainContext,
+        AspNonMembershipProof, ContractEvent, ContractsEventData, Field, GvkMode,
+        KeyDerivationSignature, LeafAddedEvent, NewCommitmentEvent, NoteAmount, NoteKeyPair,
+        PolicyFlags, SMT_DEPTH, SyncMetadata, TransactChainContext,
     },
     zk::{crypto, encryption, merkle::MerklePrefixTree},
 };
@@ -110,6 +110,7 @@ pub fn seed_prove_wallet(
             commitment,
             index: u32::try_from(leaf_index).context("leaf index")?,
             encrypted_output,
+            gvk_ciphertext: None,
         }])?;
 
         pool_leaves.push(commitment);
@@ -255,6 +256,7 @@ pub fn apply_proved_step(
             commitment,
             index: leaf_index,
             encrypted_output: encrypted_output.to_vec(),
+            gvk_ciphertext: None,
         }])?;
 
         insert_user_notes(
@@ -319,6 +321,8 @@ fn chain_snapshot_from_storage(
             root: Field::ZERO,
         }),
         policy_flags: PolicyFlags::ALLOWLIST | PolicyFlags::BLOCKLIST,
+        gvk_mode: GvkMode::Off,
+        admin_view_key: None,
     })
 }
 

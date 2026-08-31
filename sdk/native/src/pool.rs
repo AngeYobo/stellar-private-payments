@@ -17,6 +17,7 @@ use crate::{
         verify_disclosure_receipt,
     },
     error::{Error, PlanExecutionError},
+    gvk::GvkAudit,
     handle::Handle,
     plan::PreparedTransactionPlan,
     prover::Prover,
@@ -27,8 +28,8 @@ use crate::{
     transact::transact_request_from_step,
     types::{
         AspMembershipSync, DisclosureContext, DisclosureReceipt, DisclosureVerificationReport,
-        Estimate, PrivatePoolConfig, SignedTransaction, TransactChainContext, TransactionResult,
-        TransferRecipient,
+        Estimate, Field, GvkMode, PrivatePoolConfig, SignedTransaction, TransactChainContext,
+        TransactionResult, TransferRecipient,
     },
 };
 
@@ -261,6 +262,31 @@ impl<S: Storage> PrivatePool<S> {
             .map_err(|e| Error::Other(format!("simulate transaction: {e:#}")))?;
 
         Ok(())
+    }
+
+    pub async fn audit(&self, global_view_private_key: Field) -> Result<GvkAudit<S>, Error> {
+        let pool = self
+            .config
+            .contract_config
+            .pool(&self.config.pool_contract_id)
+            .map_err(|e| Error::InvalidConfig(e.to_string()))?;
+        if pool.gvk_mode == GvkMode::Off {
+            return Err(Error::InvalidConfig(format!(
+                "GVK audit requires a pool-gvk deployment; {} is configured with gvk_mode Off",
+                self.config.pool_contract_id
+            )));
+        }
+        crate::types::validate_gvk_authority_key(&global_view_private_key, pool)
+            .map_err(|e| Error::InvalidConfig(e.to_string()))?;
+        self.ensure_synced().await?;
+
+        let storage = self.storage.fork()?;
+        let pool_contract_id = self.config.pool_contract_id.clone();
+        Ok(GvkAudit::new(
+            storage,
+            pool_contract_id,
+            global_view_private_key,
+        ))
     }
 
     // lower level methods
