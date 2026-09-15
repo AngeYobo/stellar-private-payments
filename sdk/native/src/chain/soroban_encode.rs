@@ -232,16 +232,15 @@ mod tests {
         bytes.to_alloc_vec().try_into().expect("32 bytes")
     }
 
-    /// Registers a trivial contract (no constructor args) purely to obtain a
-    /// real, genuinely-registered contract `Address` -- `env.as_contract`
-    /// requires one, and a hand-crafted strkey is not enough.
+    /// Registers a trivial contract just to obtain a registered contract
+    /// `Address` to stand in for a pool or token.
     fn register_dummy_contract(env: &Env) -> Address {
         env.register(PublicKeyRegistry, ())
     }
 
-    /// Round-trips a Soroban `Address` through XDR to the `G.../C...`
-    /// strkey string form `hash_ext_data_offchain` expects, reusing the same
-    /// conversion the RPC-fetched-state path already relies on.
+    /// Converts a Soroban `Address` to the strkey string form
+    /// `hash_ext_data_offchain` expects, via the same conversion the
+    /// RPC-fetched-state path uses.
     fn address_to_string(env: &Env, addr: &Address) -> String {
         let bytes = addr.to_xdr(env).to_alloc_vec();
         let scval = ScVal::from_xdr(bytes, Limits::none()).expect("valid address xdr");
@@ -328,12 +327,10 @@ mod tests {
         assert_eq!(ours, soroban_xdr_to_vec(expected));
     }
 
-    /// `pool_ext_data_to_scval` encodes the wire `ext_data` argument passed to
-    /// `transact`; it is deliberately unrelated to `hash_ext_data`'s payload
-    /// now that the hash is bound to `pool`/`token` (values `ExtData` itself
-    /// never carries). The relationship this crate must still guarantee is
-    /// that the offline `hash_ext_data_offchain` computes the exact same
-    /// 32-byte value the on-chain `hash_ext_data` does for matching inputs.
+    /// `hash_ext_data_offchain` must compute the same 32-byte value the
+    /// on-chain `hash_ext_data` does. Its payload no longer matches
+    /// `pool_ext_data_to_scval`'s wire encoding, since the hash also covers
+    /// `pool`/`token`, which `ExtData` does not carry.
     #[test]
     fn hash_ext_data_offchain_matches_on_chain_hash_ext_data() {
         let env = Env::default();
@@ -349,9 +346,8 @@ mod tests {
             encrypted_output0: Bytes::from_slice(&env, &[1, 2, 3]),
             encrypted_output1: Bytes::from_slice(&env, &[4, 5]),
         };
-        // Run inside the pool's own contract frame, exactly as
-        // `internal_transact` does, so `env.current_contract_address()`
-        // resolves to `pool_address`.
+        // Run inside the pool's contract frame, as `internal_transact` does,
+        // so `env.current_contract_address()` resolves to `pool_address`.
         let on_chain_hash = env.as_contract(&pool_address, || {
             hash_ext_data(&env, &on_chain_ext, &token_address)
         });
@@ -372,9 +368,8 @@ mod tests {
         );
     }
 
-    /// Same equivalence, but with a different `pool`/`token` pair for the
-    /// same `ExtData`, pinning that the domain binding is not accidentally
-    /// ignored on either side.
+    /// Same equivalence for a second `pool`/`token` pair, pinning that
+    /// neither side ignores the domain binding.
     #[test]
     fn hash_ext_data_offchain_matches_on_chain_hash_ext_data_for_second_domain() {
         let env = Env::default();

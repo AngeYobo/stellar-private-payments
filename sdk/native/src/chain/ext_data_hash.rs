@@ -9,13 +9,9 @@ use crate::chain::conversions::i128_to_i256_scval;
 
 // please refer to hash_ext_data in contracts/pool-core/src/ext_data.rs
 //
-// Bound to `pool` and `token` exactly as the on-chain function is: `pool` is
-// the pool contract this hash is being computed for (mirrors
-// `env.current_contract_address()` on-chain) and `token` is that pool's own
-// configured token (mirrors the on-chain `Self::get_token(env)?` read).
-// Both must come from trusted configuration, never from arbitrary caller
-// input, or the resulting hash will not match what the pool contract
-// recomputes and `transact` will fail closed with `WrongExtHash`.
+// `pool` and `token` mirror the on-chain domain binding and must name the
+// pool being called and its configured token, or the pool recomputes a
+// different hash and `transact` fails with `WrongExtHash`.
 pub(crate) fn hash_ext_data_offchain(ext: &ExtData, pool: &str, token: &str) -> Result<[u8; 32]> {
     // 1. Prepare ScVal entries
     // Soroban structs serialize to XDR Maps sorted alphabetically by key

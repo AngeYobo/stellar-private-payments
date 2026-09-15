@@ -27,9 +27,8 @@ pub struct TransactRequest {
     pub pool_root: Option<Field>,
     pub pool_next_index: u32,
     pub pool_address: String,
-    /// This pool's own configured token contract, for the domain-bound
-    /// `ext_data_hash`. Sourced from `TransactChainContext::token_contract_id`
-    /// (on-chain state), never from caller input.
+    /// This pool's configured token contract, for the domain-bound
+    /// `ext_data_hash`. Sourced from `TransactChainContext::token_contract_id`.
     pub token_address: String,
     pub ext_recipient: String,
     pub ext_amount: ExtAmount,

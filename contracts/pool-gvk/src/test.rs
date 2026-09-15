@@ -375,12 +375,9 @@ fn mk_ext_data(env: &Env, recipient: Address, ext_amount: i32) -> ExtData {
     }
 }
 
-/// Computes the same domain-bound hash `internal_transact` checks the proof
-/// against: `pool`'s own address plus `token`, folded in exactly as
-/// `hash_ext_data` does on-chain. Delegates to the real function (run inside
-/// `pool`'s own contract frame, so `env.current_contract_address()` resolves
-/// to `pool`) rather than reimplementing the encoding, so this can never
-/// silently drift from production behavior.
+/// Computes the hash `internal_transact` checks the proof against, by calling
+/// the real `hash_ext_data` inside `pool`'s contract frame rather than
+/// reimplementing the encoding.
 fn compute_ext_hash(env: &Env, pool: &Address, token: &Address, ext: &ExtData) -> BytesN<32> {
     env.as_contract(pool, || hash_ext_data(env, ext, token))
 }
@@ -1324,6 +1321,15 @@ fn pool_gvk_nullifier_event_carries_ciphertext_only_when_traceable() {
 // match `verify_proof`'s exact public-input sequence for a specific,
 // concrete transaction.
 
+/// Placeholder used to reserve the final pool address.
+#[contract]
+struct ReservedPoolAddress;
+
+#[contractimpl]
+impl ReservedPoolAddress {
+    pub fn noop() {}
+}
+
 /// Minimal Groth16 verifier storing an arbitrary verification key supplied at
 /// construction. Unlike `circom_groth16_verifier::CircomGroth16Verifier`
 /// (whose VK is embedded at compile time, fixed workspace-wide to an
@@ -1531,14 +1537,10 @@ fn build_gvk_transact(
     let admin_view_key = mk_point(&env, 1, 2);
     let levels = 3u32;
 
-    // Registered once, with a placeholder verifier, purely to learn this
-    // pool's final address and genesis root before the fixture-matched
-    // `TestVerifier` can be built: `ext_data_hash` is now bound to this
-    // pool's own address (see `hash_ext_data`), so the address has to exist
-    // before the toy-circuit public inputs, and so the fixture itself, can
-    // be computed. The stored verifier is overwritten below once the real
-    // one exists; nothing else about the pool changes.
-    let pool_id = register_pool_gvk(
+    // Root is a pure function of `levels` (the empty-tree root), so it can be
+    // read off a throwaway pool sharing the same `levels`, before the
+    // real, fixture-matched verifier address is known.
+    let throwaway_id = register_pool_gvk(
         &env,
         &setup,
         U256::from_u32(&env, maximum_deposit_amount),
@@ -1547,7 +1549,11 @@ fn build_gvk_transact(
         admin_view_key.clone(),
         gvk_mode,
     );
-    let root = PoolGvkContractClient::new(&env, &pool_id).get_root();
+    let root = PoolGvkContractClient::new(&env, &throwaway_id).get_root();
+
+    // Reserve the address used by ext_data_hash before installing the real
+    // pool.
+    let pool_id = env.register(ReservedPoolAddress, ());
 
     let ext = mk_ext_data(&env, Address::generate(&env), ext_amount);
     let ext_hash = compute_ext_hash(&env, &pool_id, &setup.token, &ext);
@@ -1581,17 +1587,25 @@ fn build_gvk_transact(
     let (vk_bytes, real_proof) = groth16_fixture_for(&env, &values);
     proof.proof = real_proof;
 
-    // Swap in the fixture-matched verifier now that it exists. `pool_id`
-    // itself does not change, so `ext_hash` (already bound to it) stays
-    // valid; there is no public setter for the verifier, so this pokes the
-    // same storage key the constructor wrote directly.
     let verifier_id = env.register(TestVerifier, (vk_bytes,));
-    env.as_contract(&pool_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKey::Verifier, &verifier_id);
-    });
 
+    // Install the real pool at the reserved address, replacing the placeholder.
+    env.register_at(
+        &pool_id,
+        PoolGvkContract,
+        (
+            setup.admin.clone(),
+            setup.token.clone(),
+            verifier_id,
+            setup.asp_membership_address.clone(),
+            setup.asp_non_membership_address.clone(),
+            U256::from_u32(&env, maximum_deposit_amount),
+            levels,
+            0u32,
+            admin_view_key,
+            gvk_mode,
+        ),
+    );
     let pool = PoolGvkContractClient::new(&env, &pool_id);
     env.mock_all_auths();
     let sender = Address::generate(&env);

@@ -131,14 +131,12 @@ pub struct TransactParams {
     /// Pool Merkle root as a field element.
     pub pool_root: Field,
 
-    /// This pool's own contract address. Folded into `ext_data_hash`
-    /// (never into `ExtData` itself) so the resulting proof is bound to this
-    /// pool and cannot be replayed against a different pool sharing the same
-    /// verifier/VK. Must come from trusted configuration, not arbitrary
-    /// caller input.
+    /// Pool contract address. Folded into `ext_data_hash` (not into
+    /// `ExtData`) so the proof cannot be replayed against another pool
+    /// sharing the same verifier.
     pub pool_address: String,
-    /// This pool's own configured token address. Folded into
-    /// `ext_data_hash` alongside `pool_address`, for the same reason.
+    /// This pool's configured token address, folded into `ext_data_hash`
+    /// alongside `pool_address`.
     pub token_address: String,
 
     /// External recipient for extData (address/contract id as string, treated
@@ -190,11 +188,11 @@ pub struct DepositParams {
     /// Pool Merkle root as a field element.
     pub pool_root: Field,
 
-    /// Pool contract address (recipient for extData, and this pool's own
-    /// address for the domain-bound `ext_data_hash`).
+    /// Pool contract address (recipient for extData, and the pool address for
+    /// the domain-bound `ext_data_hash`).
     pub pool_address: String,
-    /// This pool's own configured token address, for the domain-bound
-    /// `ext_data_hash`. Must come from trusted configuration.
+    /// This pool's configured token address, for the domain-bound
+    /// `ext_data_hash`.
     pub token_address: String,
     /// Total amount to deposit (stroops). Passed as `ext_amount > 0`.
     pub amount: ExtAmount,
@@ -238,13 +236,12 @@ pub struct WithdrawParams {
     /// Pool Merkle root (little-endian field bytes).
     pub pool_root: Field,
 
-    /// This pool's own contract address, for the domain-bound
-    /// `ext_data_hash`. Distinct from `withdraw_recipient`: a withdrawal's
-    /// `ExtData.recipient` is the beneficiary, never the pool itself, but
-    /// the hash must still bind to the pool actually being called.
+    /// Pool contract address, for the domain-bound `ext_data_hash`. Distinct
+    /// from `withdraw_recipient`, which is the beneficiary rather than the
+    /// pool.
     pub pool_address: String,
-    /// This pool's own configured token address, for the domain-bound
-    /// `ext_data_hash`. Must come from trusted configuration.
+    /// This pool's configured token address, for the domain-bound
+    /// `ext_data_hash`.
     pub token_address: String,
     /// Address to receive withdrawn tokens (extData recipient).
     pub withdraw_recipient: String,
@@ -292,11 +289,11 @@ pub struct TransferParams {
     /// Pool Merkle root (little-endian field bytes).
     pub pool_root: Field,
 
-    /// Pool contract address (extData recipient for transfers, and this
-    /// pool's own address for the domain-bound `ext_data_hash`).
+    /// Pool contract address (extData recipient for transfers, and the pool
+    /// address for the domain-bound `ext_data_hash`).
     pub pool_address: String,
-    /// This pool's own configured token address, for the domain-bound
-    /// `ext_data_hash`. Must come from trusted configuration.
+    /// This pool's configured token address, for the domain-bound
+    /// `ext_data_hash`.
     pub token_address: String,
     /// Notes to spend (1..=2). If one is provided, `transact()` pads the second
     /// input with a dummy.

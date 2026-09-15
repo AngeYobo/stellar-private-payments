@@ -1,9 +1,8 @@
 //! External transaction data and its hash.
 //!
 //! `ExtData` carries the public parameters a proof is bound to. It is hashed
-//! together with the calling pool's own identity and the calling pool's own
-//! token, and checked against the proof's `ext_data_hash` rather than
-//! verified by the SNARK directly.
+//! together with the calling pool and that pool's token, and checked against
+//! the proof's `ext_data_hash` rather than verified by the SNARK directly.
 
 use soroban_sdk::{Address, Bytes, BytesN, Env, I256, U256, contracttype, xdr::ToXdr};
 use soroban_utils::constants::bn256_modulus;
@@ -26,13 +25,10 @@ pub struct ExtData {
     pub encrypted_output1: Bytes,
 }
 
-/// `ExtData` plus the deployment domain it is bound to.
+/// `ExtData` plus the pool and token the hash is bound to.
 ///
-/// Never constructed from caller input: `pool` and `token` are read by
-/// `hash_ext_data` from `env.current_contract_address()` and the caller's own
-/// canonical token configuration, never from `ExtData` or any other
-/// caller-supplied value. This is what makes the resulting hash, and so the
-/// proof, specific to one pool contract and one token.
+/// `pool` and `token` always come from the calling contract's own state,
+/// never from caller input.
 #[contracttype]
 #[derive(Clone)]
 struct ExtDataDomain {
@@ -46,24 +42,21 @@ struct ExtDataDomain {
 
 /// Hash external data using Keccak256, bound to the calling pool and its token
 ///
-/// Serializes `ext` together with the currently executing contract's own
-/// address (`env.current_contract_address()`) and the given token address to
-/// XDR, hashes the result with Keccak256, and reduces it modulo the BN256
-/// field size. Two pools that share a verifier/VK but differ in contract
-/// address or token produce different hashes for otherwise identical `ext`,
-/// so a proof built for one is not `ext_data_hash`-valid for the other.
+/// Serializes the external data together with the calling contract's address
+/// and the given token to XDR, hashes it with Keccak256, and reduces the
+/// result modulo the BN256 field size. Pools sharing a verifier but differing
+/// in address or token hash identical `ext` differently, so a proof built for
+/// one is not valid for another.
 ///
 /// # Arguments
 ///
 /// * `env` - The Soroban environment
 /// * `ext` - The external data to hash
-/// * `token` - The calling pool's own configured token address (from that
-///   pool's own persistent storage, never from caller input)
+/// * `token` - The calling pool's own configured token address
 ///
 /// # Returns
 ///
-/// Returns the 32-byte hash of the external data, bound to this pool and this
-/// token
+/// Returns the 32-byte hash of the external data
 pub fn hash_ext_data(env: &Env, ext: &ExtData, token: &Address) -> BytesN<32> {
     let domain = ExtDataDomain {
         pool: env.current_contract_address(),
@@ -87,12 +80,8 @@ mod test {
     use super::*;
     use soroban_sdk::{contract, contractimpl, testutils::Address as _};
 
-    // A trivial local contract, not `soroban_utils::utils::MockToken`: this
-    // crate must never itself contain `#[contractimpl]` in non-test code
-    // (see the module comment on why), but a `#[cfg(test)]`-only one never
-    // reaches `pool-core`'s compiled lib, so it carries none of that risk.
-    // It exists only so `env.as_contract` has a genuinely registered address
-    // to run `hash_ext_data` as.
+    // Only ever compiled under `cfg(test)`: `pool-core` is a library and must
+    // not export a contract from its production build.
     #[contract]
     struct DummyContract;
 

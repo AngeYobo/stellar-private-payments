@@ -31,12 +31,9 @@ fn mk_ext_data(env: &Env, recipient: Address, ext_amount: i32) -> ExtData {
     }
 }
 
-/// Computes the same domain-bound hash `internal_transact` checks the proof
-/// against: `pool`'s own address plus `token`, folded in exactly as
-/// `hash_ext_data` does on-chain. Delegates to the real function (run inside
-/// `pool`'s own contract frame, so `env.current_contract_address()` resolves
-/// to `pool`) rather than reimplementing the encoding, so this can never
-/// silently drift from production behavior.
+/// Computes the hash `internal_transact` checks the proof against, by calling
+/// the real `hash_ext_data` inside `pool`'s contract frame rather than
+/// reimplementing the encoding.
 fn compute_ext_hash(env: &Env, pool: &Address, token: &Address, ext: &ExtData) -> BytesN<32> {
     env.as_contract(pool, || hash_ext_data(env, ext, token))
 }
@@ -124,9 +121,7 @@ fn setup_test_contracts(env: &Env) -> TestSetup {
     }
 }
 
-/// Same admin/verifier/ASP contracts as `base` (a shared verification-key and
-/// policy domain), but a caller-supplied token -- i.e. a second pool with
-/// distinct asset identity from whatever `base.token` is.
+/// Same admin, verifier and ASP contracts as `base`, but a different token.
 fn setup_with_token(env: &Env, base: &TestSetup, token: Address) -> TestSetup {
     TestSetup {
         admin: base.admin.clone(),
@@ -1536,35 +1531,18 @@ fn transact_rejects_deposit_with_invalid_proof_without_moving_funds() {
 
 /// Cross-pool regression test for proof-domain binding.
 ///
-/// Pool A and Pool B share the same verifier (hence the same VK), the same
-/// ASP contracts, and the same tree depth, but have distinct token/asset
-/// identities and are distinct contract instances -- i.e. distinct deployment
-/// domains, of exactly the kind `deployments/scripts/deploy.sh` produces when
-/// one verifier is reused across pools for different assets.
-///
-/// Pre-fix history (evidence this test used to demonstrate, before
-/// `hash_ext_data` bound `pool`/`token` into the hash): a single `(proof,
-/// ExtData)` pair built for Pool A, submitted unmodified to Pool B, cleared
-/// every check ahead of the verifier -- known root, ext-data-hash,
-/// public-amount -- on both pools and was refused only by the shared
-/// verifier's pairing check on both, i.e. `Err(Ok(Error::InvalidProof))` on
-/// Pool B too. Nothing pool- or token-specific distinguished the two
-/// deployments. That was confirmed by running this test, unmodified, against
-/// the pre-fix `hash_ext_data(env, ext)` (no `pool`/`token` arguments).
-///
-/// Current (post-fix) invariant: since `hash_ext_data` now folds in
-/// `env.current_contract_address()` and the calling pool's own configured
-/// token, the hash Pool A computed for `ext` cannot equal the hash Pool B
-/// computes for the same `ext`, so Pool B must now refuse at the
-/// `ext_data_hash` check itself, before ever reaching the verifier.
+/// Pool A and Pool B share a verifier, ASP contracts and tree depth but have
+/// distinct addresses and tokens, as when one verifier is reused across pools
+/// for different assets. Before `hash_ext_data` bound `pool`/`token`, Pool A's
+/// `(proof, ExtData)` cleared every check on Pool B up to the shared
+/// verifier; now Pool B must refuse it at the `ext_data_hash` check.
 #[test]
 #[cfg_attr(miri, ignore)]
 fn transact_rejects_pool_a_proof_replayed_on_pool_b() {
     let env = test_env();
     let setup = setup_test_contracts(&env);
 
-    // Pool A: `setup`'s own token. Pool B: same verifier/ASP contracts, a
-    // different token -- distinct asset identity, distinct contract address.
+    // Pool B reuses Pool A's verifier and ASP contracts but a different token.
     let pool_a_id = register_pool(&env, &setup, U256::from_u32(&env, 1000), 8, 0);
     let setup_b = setup_with_token(&env, &setup, register_mock_token(&env));
     let pool_b_id = register_pool(&env, &setup_b, U256::from_u32(&env, 1000), 8, 0);
@@ -1581,9 +1559,7 @@ fn transact_rejects_pool_a_proof_replayed_on_pool_b() {
     let pool_a = PoolContractClient::new(&env, &pool_a_id);
     let pool_b = PoolContractClient::new(&env, &pool_b_id);
 
-    // Confirm the shared premise -- two independently initialized pools with
-    // the same tree depth start from an identical genesis root, so the root
-    // check alone cannot be what stops the replay.
+    // Equal genesis roots, so the root check cannot be what stops the replay.
     assert_eq!(
         pool_a.get_root(),
         pool_b.get_root(),
@@ -1592,8 +1568,7 @@ fn transact_rejects_pool_a_proof_replayed_on_pool_b() {
 
     env.mock_all_auths();
     // Policy flags 0: neither ASP root is compared, so an ASP mismatch cannot
-    // masquerade as a domain-binding rejection (matches the isolation used by
-    // `transact_reports_verifier_rejection_as_invalid_proof`).
+    // masquerade as a domain-binding rejection.
     let (proof, ext) = mk_transact_proof(
         &env,
         &pool_a,
@@ -1603,10 +1578,8 @@ fn transact_rejects_pool_a_proof_replayed_on_pool_b() {
         0xF00D,
     );
 
-    // Baseline: Pool A, the pool the proof was built against, must still
-    // clear every check ahead of the verifier and be refused only there.
-    // Unaffected by the fix: Pool A's own hash always matched its own ext
-    // hash check, before and after `pool`/`token` were folded in.
+    // Baseline: on the pool it was built for, the proof still clears every
+    // check ahead of the verifier and is refused only there.
     let err_a = pool_a
         .try_transact(&proof, &ext, &Address::generate(&env))
         .expect_err("the mock proof always fails the verifier's pairing check");
@@ -1616,22 +1589,16 @@ fn transact_rejects_pool_a_proof_replayed_on_pool_b() {
         "sanity check: Pool A must reach the verifier boundary, not an earlier check"
     );
 
-    // The proof under test: the *same* (proof, ext) values, naming neither
-    // pool's address nor either pool's token, submitted unchanged to Pool B.
+    // The same (proof, ext) values, submitted unchanged to Pool B.
     let err_b = pool_b.try_transact(&proof, &ext, &Address::generate(&env));
 
     match err_b {
-        Err(Ok(Error::WrongExtHash)) => {
-            // Actual (post-fix) result: Pool B's own domain-bound hash
-            // (its own address, its own token) differs from the hash Pool A
-            // computed for the identical `ext`, so the replay is refused at
-            // the earliest domain-specific check, before the verifier is
-            // ever reached.
-        }
+        // Pool B's own hash differs from Pool A's for the identical `ext`,
+        // so the replay is refused before the verifier is reached.
+        Err(Ok(Error::WrongExtHash)) => {}
         Err(Ok(Error::InvalidProof)) => panic!(
             "domain binding missing: Pool B accepted Pool A's ext_data_hash \
-             and reached the verifier boundary ({err_b:?}) -- the fix did \
-             not take effect, or was reverted"
+             and reached the verifier boundary ({err_b:?})"
         ),
         other => panic!("unexpected result reaching a check this test does not isolate: {other:?}"),
     }
